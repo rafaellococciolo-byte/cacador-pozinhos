@@ -1,9 +1,1 @@
-{
-  "buildCommand": "npm run build",
-  "framework": "react",
-  "outputDirectory": "build",
-  "devCommand": "npm start",
-  "env": {
-    "ANTHROPIC_API_KEY": "@ANTHROPIC_API_KEY"
-  }
-}
+{ "buildCommand": "npm run build", "outputDirectory": "build", "devCommand": "npm start" } 
