@@ -1,103 +1,78 @@
 const https = require('https');
 
-function fetchSite(url) {
-  return new Promise((resolve) => {
+function fetchJSON(url) {
+  return new Promise((resolve, reject) => {
     https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve(data));
-    }).on('error', () => resolve(''));
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch(e) { resolve(null); } });
+    }).on('error', reject);
   });
 }
 
-function parseOpcoes(html, pmin, pmax, vmin, dmin) {
-  const opcoes = [];
-  const regex = /<tr[^>]*>[\s\S]*?<\/tr>/gi;
-  const rows = html.match(regex) || [];
-  const hoje = new Date();
-
-  rows.forEach(row => {
-    const cols = (row.match(/<td[^>]*>([\s\S]*?)<\/td>/gi) || [])
-      .map(c => c.replace(/<[^>]+>/g, '').trim().replace(',', '.'));
-
-    if (cols.length < 6) return;
-
-    const codigo = cols[0];
-    const preco = parseFloat(cols[1]);
-    const volume = parseInt(cols[3]);
-    const vencStr = cols[5];
-
-    if (!codigo || isNaN(preco) || isNaN(volume)) return;
-    if (preco < pmin || preco > pmax) return;
-    if (volume < vmin) return;
-
-    const tipo = codigo.match(/[A-L]/i) ? 'CALL' : 'PUT';
-    const ativo = codigo.substring(0, 4);
-
-    let vencDate = null;
-    if (vencStr && vencStr.includes('/')) {
-      const [d, m, y] = vencStr.split('/');
-      vencDate = `20${y}-${m}-${d}`;
-    }
-
-    const dias = vencDate
-      ? Math.round((new Date(vencDate) - hoje) / 86400000)
-      : 0;
-
-    if (dias < dmin) return;
-
-    const oportunidade = preco <= 0.02 && volume >= 5000 && dias >= 180;
-    const alerta = !oportunidade && preco <= 0.03 && volume >= 2000 && dias >= 120;
-
-    opcoes.push({ codigo, ativo, tipo, preco, volume, vencimento: vencDate, dias, oportunidade, alerta });
-  });
-
-  return opcoes;
-}
+const ATIVOS = ['PETR4','VALE3','ITUB4','BBDC4','WEGE3','ABEV3','BBAS3','MGLU3','PCAR3','BEEF3','CSNA3','CVCB3'];
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const { tipo = 'todos', pmin = '0.01', pmax = '0.05', vmin = '500', dmin = '180' } = req.query;
+  const { tipo='todos', pmin='0.01', pmax='0.05', vmin='500', dmin='180' } = req.query;
+  const PMIN = parseFloat(pmin), PMAX = parseFloat(pmax), VMIN = parseInt(vmin), DMIN = parseInt(dmin);
+  const hoje = new Date();
 
   try {
-    const html = await fetchSite('https://opcoes.net.br/opcoes/pozinhos');
+    const resultados = [];
 
-    if (!html || html.length < 100) {
-      return res.status(200).json({
-        sucesso: false,
-        erro: 'Site indisponível no momento',
-        opcoes: [],
-        total: 0
-      });
+    for (const ativo of ATIVOS) {
+      try {
+        const data = await fetchJSON(`https://brapi.dev/api/v2/options/${ativo}`);
+        if (!data || !data.options) continue;
+
+        data.options.forEach(op => {
+          if (!op.contractSymbol || !op.lastPrice) return;
+          const preco = parseFloat(op.lastPrice);
+          const volume = parseInt(op.volume || 0);
+          const tipoOp = op.type === 'call' ? 'CALL' : 'PUT';
+          const venc = op.expirationDate ? new Date(op.expirationDate * 1000) : null;
+          const dias = venc ? Math.round((venc - hoje) / 86400000) : 0;
+          const vencStr = venc ? venc.toISOString().slice(0,10) : null;
+
+          if (preco < PMIN || preco > PMAX) return;
+          if (volume < VMIN) return;
+          if (dias < DMIN) return;
+          if (tipo !== 'todos' && tipoOp !== tipo) return;
+
+          const oportunidade = preco <= 0.02 && volume >= 5000 && dias >= 180;
+          const alerta = !oportunidade && preco <= 0.03 && volume >= 2000 && dias >= 120;
+
+          resultados.push({
+            codigo: op.contractSymbol,
+            ativo,
+            tipo: tipoOp,
+            strike: parseFloat(op.strikePrice || 0),
+            preco,
+            volume,
+            vencimento: vencStr,
+            dias,
+            oportunidade,
+            alerta
+          });
+        });
+      } catch(e) { continue; }
     }
 
-    let opcoes = parseOpcoes(
-      html,
-      parseFloat(pmin),
-      parseFloat(pmax),
-      parseInt(vmin),
-      parseInt(dmin)
-    );
-
-    if (tipo !== 'todos') {
-      opcoes = opcoes.filter(o => o.tipo === tipo);
-    }
-
-    opcoes.sort((a, b) => b.oportunidade - a.oportunidade || a.preco - b.preco);
+    resultados.sort((a,b) => b.oportunidade - a.oportunidade || a.preco - b.preco);
 
     return res.status(200).json({
       sucesso: true,
-      total: opcoes.length,
-      oportunidades: opcoes.filter(o => o.oportunidade).length,
-      alertas: opcoes.filter(o => o.alerta).length,
-      opcoes,
+      total: resultados.length,
+      oportunidades: resultados.filter(o=>o.oportunidade).length,
+      alertas: resultados.filter(o=>o.alerta).length,
+      opcoes: resultados,
       timestamp: new Date().toISOString()
     });
 
-  } catch (err) {
+  } catch(err) {
     return res.status(500).json({ sucesso: false, erro: err.message, opcoes: [] });
   }
-};
+};  
