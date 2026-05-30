@@ -8,16 +8,16 @@ async function buscarPozinhos() {
   }
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ erro: 'Método não permitido' });
 
   const { pergunta } = req.body;
-  if (!pergunta?.trim()) return res.status(400).json({ erro: 'Pergunta vazia' });
+  if (!pergunta || !pergunta.trim()) return res.status(400).json({ erro: 'Pergunta vazia' });
 
   if (!process.env.GEMINI_API_KEY) {
-    return res.status(500).json({ erro: 'GEMINI_API_KEY não configurada na Vercel.' });
+    return res.status(500).json({ erro: 'GEMINI_API_KEY não configurada.' });
   }
 
   try {
@@ -39,4 +39,4 @@ export default async function handler(req, res) {
   } catch (error) {
     return res.status(500).json({ erro: `Erro interno: ${error.message}` });
   }
-} 
+}
