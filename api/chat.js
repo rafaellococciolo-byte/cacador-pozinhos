@@ -1,5 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk';
-
 async function buscarPozinhos() {
   try {
     const response = await fetch('https://opcoes.net.br/opcoes/pozinhos');
@@ -21,27 +19,24 @@ export default async function handler(req, res) {
     return res.status(400).json({ erro: 'Pergunta vazia' });
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return res.status(500).json({ erro: 'API Key não configurada.' });
-  }
-
   try {
     const dadosPozinhos = await buscarPozinhos();
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-    const message = await client.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 1024,
-      messages: [{
-        role: 'user',
-        content: `Você é especialista em opções da B3. Use estes dados do site opcoes.net.br:\n\n${dadosPozinhos}\n\nPergunta: ${pergunta}`
-      }]
-    });
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: `Você é especialista em opções da B3. Use estes dados do site opcoes.net.br:\n\n${dadosPozinhos}\n\nPergunta: ${pergunta}`
+            }]
+          }]
+        })
+      }
+    );
 
-    const resposta = message.content[0].type === 'text' ? message.content[0].text : 'Erro ao processar';
-    return res.status(200).json({ resposta });
-
-  } catch (error) {
-    return res.status(500).json({ erro: 'Erro ao conectar com Claude.' });
-  }
-}
+    const data = await response.json();
+    const resposta = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Sem resposta';
+    return res.status(200)
